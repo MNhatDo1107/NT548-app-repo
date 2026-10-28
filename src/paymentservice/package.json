@@ -23,5 +23,10 @@
     "pino": "10.3.1",
     "simple-card-validator": "^1.1.0",
     "uuid": "^14.0.0"
+  },
+  "overrides": {
+    "@opentelemetry/exporter-otlp-grpc": {
+      "protobufjs": "^7.5.5"
+    }
   }
 }

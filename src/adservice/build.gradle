@@ -30,6 +30,7 @@ ext {
 }
 
 dependencies {
+    implementation platform("io.netty:netty-bom:4.2.17.Final")
     if (speed) {
         implementation fileTree(dir: offlineCompile, include: '*.jar')
     } else {
