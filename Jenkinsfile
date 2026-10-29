@@ -66,7 +66,7 @@ pipeline {
             if (s in GO_SVCS) {
               sh """
                 IMG=\$(grep -m1 -oE 'golang:[^ ]+' src/${s}/Dockerfile | cut -d@ -f1)
-                docker run --rm -e CGO_ENABLED=0 -v "\$PWD/src/${s}":/src -w /src \$IMG go test ./...
+                docker run --rm -e CGO_ENABLED=0 -v go-mod-cache:/go/pkg/mod -v "\$PWD/src/${s}":/src -w /src \$IMG go test ./...
               """
             } else if (s == 'cartservice') {
               sh '''
@@ -86,6 +86,7 @@ pipeline {
       steps {
         script {
           for (s in env.CHANGED.split(' ')) {
+            sh "mkdir -p odc-${s}"
             dependencyCheck odcInstallation: 'OWASP-DC',
               additionalArguments: "--scan src/${s} --project ${s} --format HTML --format XML --out odc-${s} --noupdate --enableExperimental"
           }
@@ -99,19 +100,26 @@ pipeline {
       steps {
         script {
           def scanner = tool 'SonarScanner'
+          def failed = []
           for (s in env.CHANGED.split(' ')) {
             if (s in SONAR_SKIP) {
               echo "${s}: bo qua SonarQube"
             } else {
-              withSonarQubeEnv('SonarQube') {
-                sh "${scanner}/bin/sonar-scanner -Dsonar.projectKey=boutique-${s} -Dsonar.projectName=${s} -Dsonar.sources=src/${s} -Dsonar.exclusions=**/*_test.go,**/node_modules/**,**/genproto/**"
-              }
-              timeout(time: 5, unit: 'MINUTES') {
-                def qg = waitForQualityGate()
-                if (qg.status != 'OK') { error "${s}: Quality Gate ${qg.status}" }
+              try {
+                withSonarQubeEnv('SonarQube') {
+                  sh "${scanner}/bin/sonar-scanner -Dsonar.projectKey=boutique-${s} -Dsonar.projectName=${s} -Dsonar.sources=src/${s} -Dsonar.exclusions=**/*_test.go,**/node_modules/**,**/genproto/**"
+                }
+                timeout(time: 5, unit: 'MINUTES') {
+                  def qg = waitForQualityGate()
+                  if (qg.status != 'OK') { error "${s}: Quality Gate ${qg.status}" }
+                }
+              } catch (hudson.AbortException e) {
+                echo "SONAR FAIL ${s}: ${e.message}"
+                failed << s
               }
             }
           }
+          if (failed) { error "SonarQube khong dat: ${failed.join(', ')}" }
         }
       }
     }
@@ -131,9 +139,16 @@ pipeline {
       when { allOf { branch 'staging'; expression { changed() } } }
       steps {
         script {
+          def failed = []
           for (s in env.CHANGED.split(' ')) {
-            sh "trivy image --no-progress --severity CRITICAL --ignore-unfixed --exit-code 1 --output trivy-${s}.txt ${env.REG}/${s}:${env.SHA}"
+            try {
+              sh "trivy image --no-progress --severity CRITICAL --ignore-unfixed --exit-code 1 --output trivy-${s}.txt ${env.REG}/${s}:${env.SHA}"
+            } catch (hudson.AbortException e) {
+              echo "TRIVY FAIL ${s}"
+              failed << s
+            }
           }
+          if (failed) { error "Trivy CRITICAL: ${failed.join(', ')}" }
         }
       }
     }
